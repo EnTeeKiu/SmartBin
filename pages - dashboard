@@ -1,0 +1,314 @@
+import React, { useState } from 'react';
+import { base44 } from '@/api/base44Client';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import { 
+  Trash2, 
+  Plus, 
+  Search, 
+  Battery, 
+  AlertTriangle, 
+  Activity,
+  RefreshCw,
+  Loader2
+} from "lucide-react";
+import StatsCard from "@/components/dashboard/StatsCard";
+import BinCard from "@/components/dashboard/BinCard";
+import AlertItem from "@/components/dashboard/AlertItem";
+import { FillLevelAreaChart, BinStatusPieChart } from "@/components/dashboard/FillLevelChart";
+import BinMapView from "@/components/map/BinMapView";
+import BinForm from "@/components/forms/BinForm";
+
+export default function Dashboard() {
+  const [search, setSearch] = useState('');
+  const [typeFilter, setTypeFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('all');
+
+  const [showForm, setShowForm] = useState(false);
+  const [editingBin, setEditingBin] = useState(null);
+  const [selectedBin, setSelectedBin] = useState(null);
+
+  const queryClient = useQueryClient();
+
+  const { data: bins = [], isLoading: binsLoading, refetch: refetchBins } = useQuery({
+    queryKey: ['wastebins'],
+    queryFn: () => base44.entities.WasteBin.list('-updated_date'),
+  });
+
+  const { data: alerts = [], isLoading: alertsLoading } = useQuery({
+    queryKey: ['alerts'],
+    queryFn: () => base44.entities.Alert.filter({ is_resolved: false }, '-created_date', 10),
+  });
+
+  const createBinMutation = useMutation({
+    mutationFn: (data) => base44.entities.WasteBin.create(data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['wastebins'] });
+      setShowForm(false);
+    },
+  });
+
+  const updateBinMutation = useMutation({
+    mutationFn: ({ id, data }) => base44.entities.WasteBin.update(id, data),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['wastebins'] });
+      setShowForm(false);
+      setEditingBin(null);
+    },
+  });
+
+  const resolveAlertMutation = useMutation({
+    mutationFn: (alert) => base44.entities.Alert.update(alert.id, { 
+      is_resolved: true, 
+      resolved_at: new Date().toISOString() 
+    }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['alerts'] });
+    },
+  });
+
+  const filteredBins = bins.filter(bin => {
+    const matchesSearch = bin.name?.toLowerCase().includes(search.toLowerCase()) ||
+                         bin.location_name?.toLowerCase().includes(search.toLowerCase()) ||
+                         bin.bin_id?.toLowerCase().includes(search.toLowerCase());
+    const matchesType = typeFilter === 'all' || bin.bin_type === typeFilter;
+    const matchesStatus = statusFilter === 'all' || bin.status === statusFilter;
+    return matchesSearch && matchesType && matchesStatus;
+  });
+
+  // Calculate stats
+  const totalBins = bins.length;
+  const activeBins = bins.filter(b => b.status === 'active').length;
+  const criticalBins = bins.filter(b => b.fill_level >= 80).length;
+  const avgFillLevel = bins.length > 0 
+    ? Math.round(bins.reduce((acc, b) => acc + (b.fill_level || 0), 0) / bins.length)
+    : 0;
+
+  // Chart data
+  const statusData = [
+    { name: 'Normal (<60%)', value: bins.filter(b => b.fill_level < 60).length },
+    { name: 'Warning (60-80%)', value: bins.filter(b => b.fill_level >= 60 && b.fill_level < 80).length },
+    { name: 'Critical (≥80%)', value: bins.filter(b => b.fill_level >= 80).length },
+  ];
+
+  const trendData = [
+    { time: '00:00', avgFill: 35 },
+    { time: '04:00', avgFill: 38 },
+    { time: '08:00', avgFill: 52 },
+    { time: '12:00', avgFill: 65 },
+    { time: '16:00', avgFill: 58 },
+    { time: '20:00', avgFill: avgFillLevel },
+  ];
+
+  const handleSubmitBin = (data) => {
+    if (editingBin) {
+      updateBinMutation.mutate({ id: editingBin.id, data });
+    } else {
+      createBinMutation.mutate(data);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-emerald-50/30">
+      <div className="p-6 max-w-7xl mx-auto space-y-6">
+        {/* Header */}
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div>
+            <h1 className="text-3xl font-bold text-slate-800">
+              Smart Waste Monitoring
+            </h1>
+            <p className="text-slate-500 mt-1">
+              Real-time IoT bin management dashboard
+            </p>
+          </div>
+          <div className="flex items-center gap-3">
+            <Button 
+              variant="outline" 
+              size="icon"
+              onClick={() => refetchBins()}
+              className="hover:bg-emerald-50 hover:text-emerald-600 hover:border-emerald-200"
+            >
+              <RefreshCw className="w-4 h-4" />
+            </Button>
+            <Button 
+              onClick={() => {
+                setEditingBin(null);
+                setShowForm(true);
+              }}
+              className="bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 shadow-lg shadow-emerald-500/25"
+            >
+              <Plus className="w-4 h-4 mr-2" />
+              Add Bin
+            </Button>
+          </div>
+        </div>
+
+        {/* Stats Grid */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <StatsCard
+            title="Total Bins"
+            value={totalBins}
+            icon={Trash2}
+            color="blue"
+            subtitle={`${activeBins} active`}
+          />
+          <StatsCard
+            title="Average Fill"
+            value={`${avgFillLevel}%`}
+            icon={Activity}
+            color="green"
+            trend={{ positive: true, value: "5%", label: "vs yesterday" }}
+          />
+          <StatsCard
+            title="Critical Bins"
+            value={criticalBins}
+            icon={AlertTriangle}
+            color={criticalBins > 0 ? "red" : "green"}
+            subtitle="≥80% full"
+          />
+          <StatsCard
+            title="Active Alerts"
+            value={alerts.length}
+            icon={Battery}
+            color={alerts.length > 0 ? "orange" : "cyan"}
+            subtitle="Unresolved"
+          />
+        </div>
+
+        {/* Map Section */}
+        <BinMapView
+          bins={filteredBins}
+          selectedBin={selectedBin}
+          onSelectBin={setSelectedBin}
+          className="h-[400px]"
+        />
+
+        {/* Main Content */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          {/* Left Column - Bins */}
+          <div className="lg:col-span-2 space-y-4">
+            {/* Filters */}
+            <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-4">
+              <div className="flex flex-col sm:flex-row gap-3">
+                <div className="relative flex-1">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <Input
+                    placeholder="Search bins..."
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    className="pl-10"
+                  />
+                </div>
+                <Select value={typeFilter} onValueChange={setTypeFilter}>
+                  <SelectTrigger className="w-full sm:w-36">
+                    <SelectValue placeholder="Type" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Types</SelectItem>
+                    <SelectItem value="general">General</SelectItem>
+                    <SelectItem value="recyclable">Recyclable</SelectItem>
+                    <SelectItem value="organic">Organic</SelectItem>
+                    <SelectItem value="hazardous">Hazardous</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Select value={statusFilter} onValueChange={setStatusFilter}>
+                  <SelectTrigger className="w-full sm:w-36">
+                    <SelectValue placeholder="Status" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Status</SelectItem>
+                    <SelectItem value="active">Active</SelectItem>
+                    <SelectItem value="maintenance">Maintenance</SelectItem>
+                    <SelectItem value="offline">Offline</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            {/* Bins Grid */}
+            {binsLoading ? (
+              <div className="flex items-center justify-center h-64">
+                <Loader2 className="w-8 h-8 animate-spin text-emerald-500" />
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {filteredBins.map(bin => (
+                  <BinCard
+                    key={bin.id}
+                    bin={bin}
+                    onEdit={(b) => {
+                      setEditingBin(b);
+                      setShowForm(true);
+                    }}
+                    onViewDetails={setSelectedBin}
+                  />
+                ))}
+                {filteredBins.length === 0 && (
+                  <div className="col-span-2 text-center py-12 text-slate-400">
+                    <Trash2 className="w-12 h-12 mx-auto mb-4 opacity-50" />
+                    <p>No bins found. Add your first bin to get started.</p>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Right Column - Charts & Alerts */}
+          <div className="space-y-4">
+            <FillLevelAreaChart data={trendData} />
+            <BinStatusPieChart data={statusData} />
+            
+            {/* Alerts */}
+            <div className="bg-white rounded-xl shadow-lg border-0 p-5">
+              <h3 className="text-lg font-semibold text-slate-800 mb-4 flex items-center gap-2">
+                <AlertTriangle className="w-5 h-5 text-amber-500" />
+                Active Alerts
+              </h3>
+              <div className="space-y-3 max-h-[300px] overflow-y-auto">
+                {alertsLoading ? (
+                  <div className="flex items-center justify-center py-8">
+                    <Loader2 className="w-6 h-6 animate-spin text-slate-400" />
+                  </div>
+                ) : alerts.length > 0 ? (
+                  alerts.map(alert => (
+                    <AlertItem
+                      key={alert.id}
+                      alert={alert}
+                      onResolve={() => resolveAlertMutation.mutate(alert)}
+                    />
+                  ))
+                ) : (
+                  <div className="text-center py-8 text-slate-400">
+                    <Activity className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                    <p className="text-sm">No active alerts</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Bin Form Modal */}
+      <BinForm
+        bin={editingBin}
+        open={showForm}
+        onClose={() => {
+          setShowForm(false);
+          setEditingBin(null);
+        }}
+        onSubmit={handleSubmitBin}
+        isLoading={createBinMutation.isPending || updateBinMutation.isPending}
+      />
+    </div>
+  );
+}
