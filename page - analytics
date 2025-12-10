@@ -1,17 +1,9 @@
 import React, { useState } from 'react';
 import { base44 } from '@/api/base44Client';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import { useQuery } from '@tanstack/react-query';
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { Button } from "@/components/ui/button";
 import {
   Select,
   SelectContent,
@@ -19,347 +11,293 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import { 
-  Plus, 
-  Search, 
-  Edit2, 
+  BarChart, 
+  Bar, 
+  XAxis, 
+  YAxis, 
+  CartesianGrid, 
+  Tooltip, 
+  ResponsiveContainer,
+  LineChart,
+  Line,
+  PieChart,
+  Pie,
+  Cell,
+  Legend,
+  AreaChart,
+  Area
+} from 'recharts';
+import { 
+  TrendingUp, 
+  Calendar, 
   Trash2, 
-  Battery,
-  Wifi,
-  MapPin,
-  Loader2,
+  Recycle, 
+  Leaf, 
+  AlertTriangle,
   Download,
-  Upload,
-  MoreHorizontal
+  Loader2,
+  BarChart3,
+  PieChartIcon,
+  Activity
 } from "lucide-react";
-import { Progress } from "@/components/ui/progress";
-import { cn } from "@/lib/utils";
-import { format } from "date-fns";
-import BinForm from "@/components/forms/BinForm";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+import { format, subDays } from "date-fns";
 
-const statusColors = {
-  active: "bg-emerald-100 text-emerald-700",
-  maintenance: "bg-amber-100 text-amber-700",
-  offline: "bg-red-100 text-red-700"
-};
+const COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4'];
 
-const typeColors = {
-  general: "bg-slate-100 text-slate-700",
-  recyclable: "bg-blue-100 text-blue-700",
-  organic: "bg-green-100 text-green-700",
-  hazardous: "bg-red-100 text-red-700"
-};
+export default function Analytics() {
+  const [timeRange, setTimeRange] = useState('7d');
 
-export default function BinManagement() {
-  const [search, setSearch] = useState('');
-  const [typeFilter, setTypeFilter] = useState('all');
-  const [statusFilter, setStatusFilter] = useState('all');
-  const [showForm, setShowForm] = useState(false);
-  const [editingBin, setEditingBin] = useState(null);
-  const [deleteConfirm, setDeleteConfirm] = useState(null);
-
-  const queryClient = useQueryClient();
-
-  const { data: bins = [], isLoading } = useQuery({
+  const { data: bins = [], isLoading: binsLoading } = useQuery({
     queryKey: ['wastebins'],
-    queryFn: () => base44.entities.WasteBin.list('-updated_date'),
+    queryFn: () => base44.entities.WasteBin.list(),
   });
 
-  const createMutation = useMutation({
-    mutationFn: (data) => base44.entities.WasteBin.create(data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['wastebins'] });
-      setShowForm(false);
-    },
+  const { data: readings = [], isLoading: readingsLoading } = useQuery({
+    queryKey: ['readings'],
+    queryFn: () => base44.entities.SensorReading.list('-reading_timestamp', 100),
   });
 
-  const updateMutation = useMutation({
-    mutationFn: ({ id, data }) => base44.entities.WasteBin.update(id, data),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['wastebins'] });
-      setShowForm(false);
-      setEditingBin(null);
-    },
-  });
+  const isLoading = binsLoading || readingsLoading;
 
-  const deleteMutation = useMutation({
-    mutationFn: (id) => base44.entities.WasteBin.delete(id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['wastebins'] });
-      setDeleteConfirm(null);
-    },
-  });
+  // Calculate metrics
+  const avgFillLevel = bins.length > 0 
+    ? Math.round(bins.reduce((acc, b) => acc + (b.fill_level || 0), 0) / bins.length)
+    : 0;
 
-  const filteredBins = bins.filter(bin => {
-    const matchesSearch = bin.name?.toLowerCase().includes(search.toLowerCase()) ||
-                         bin.location_name?.toLowerCase().includes(search.toLowerCase()) ||
-                         bin.bin_id?.toLowerCase().includes(search.toLowerCase());
-    const matchesType = typeFilter === 'all' || bin.bin_type === typeFilter;
-    const matchesStatus = statusFilter === 'all' || bin.status === statusFilter;
-    return matchesSearch && matchesType && matchesStatus;
-  });
+  const criticalBins = bins.filter(b => b.fill_level >= 80).length;
+  const collectionEfficiency = bins.length > 0 
+    ? Math.round((bins.filter(b => b.fill_level < 80).length / bins.length) * 100)
+    : 0;
 
-  const handleSubmit = (data) => {
-    if (editingBin) {
-      updateMutation.mutate({ id: editingBin.id, data });
-    } else {
-      createMutation.mutate(data);
-    }
-  };
+  // Fill level distribution
+  const fillDistribution = [
+    { name: '0-25%', value: bins.filter(b => b.fill_level < 25).length, color: '#10b981' },
+    { name: '25-50%', value: bins.filter(b => b.fill_level >= 25 && b.fill_level < 50).length, color: '#3b82f6' },
+    { name: '50-75%', value: bins.filter(b => b.fill_level >= 50 && b.fill_level < 75).length, color: '#f59e0b' },
+    { name: '75-100%', value: bins.filter(b => b.fill_level >= 75).length, color: '#ef4444' },
+  ];
+
+  // Bin type distribution
+  const typeDistribution = [
+    { name: 'General', value: bins.filter(b => b.bin_type === 'general').length },
+    { name: 'Recyclable', value: bins.filter(b => b.bin_type === 'recyclable').length },
+    { name: 'Organic', value: bins.filter(b => b.bin_type === 'organic').length },
+    { name: 'Hazardous', value: bins.filter(b => b.bin_type === 'hazardous').length },
+  ];
+
+  // Generate trend data (simulated for demo)
+  const trendData = Array.from({ length: 7 }, (_, i) => ({
+    date: format(subDays(new Date(), 6 - i), 'MMM d'),
+    avgFill: Math.floor(Math.random() * 30) + 40,
+    collections: Math.floor(Math.random() * 10) + 5,
+  }));
+
+  // Connection type distribution
+  const connectionData = [
+    { name: 'Wi-Fi', value: bins.filter(b => b.connection_type === 'wifi').length },
+    { name: 'LoRa', value: bins.filter(b => b.connection_type === 'lora').length },
+    { name: 'Cellular', value: bins.filter(b => b.connection_type === 'cellular').length },
+  ];
+
+  // Top bins by fill level
+  const topFilledBins = [...bins]
+    .sort((a, b) => (b.fill_level || 0) - (a.fill_level || 0))
+    .slice(0, 5);
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-blue-50/30">
+    <div className="min-h-screen bg-gradient-to-br from-slate-50 via-white to-purple-50/30">
       <div className="p-6 max-w-7xl mx-auto space-y-6">
         {/* Header */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
-            <h1 className="text-3xl font-bold text-slate-800">Bin Management</h1>
+            <h1 className="text-3xl font-bold text-slate-800">Analytics</h1>
             <p className="text-slate-500 mt-1">
-              Add, edit, and manage all waste bins
+              Insights and performance metrics
             </p>
           </div>
           <div className="flex items-center gap-3">
-            <Button 
-              onClick={() => {
-                setEditingBin(null);
-                setShowForm(true);
-              }}
-              className="bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 shadow-lg shadow-blue-500/25"
-            >
-              <Plus className="w-4 h-4 mr-2" />
-              Add New Bin
+            <Select value={timeRange} onValueChange={setTimeRange}>
+              <SelectTrigger className="w-40">
+                <Calendar className="w-4 h-4 mr-2" />
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="24h">Last 24 Hours</SelectItem>
+                <SelectItem value="7d">Last 7 Days</SelectItem>
+                <SelectItem value="30d">Last 30 Days</SelectItem>
+                <SelectItem value="90d">Last 90 Days</SelectItem>
+              </SelectContent>
+            </Select>
+            <Button variant="outline">
+              <Download className="w-4 h-4 mr-2" />
+              Export
             </Button>
           </div>
         </div>
 
-        {/* Filters */}
-        <div className="bg-white rounded-xl shadow-sm border border-slate-100 p-4">
-          <div className="flex flex-col sm:flex-row gap-3">
-            <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-              <Input
-                placeholder="Search by name, ID, or location..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="pl-10"
-              />
-            </div>
-            <Select value={typeFilter} onValueChange={setTypeFilter}>
-              <SelectTrigger className="w-full sm:w-40">
-                <SelectValue placeholder="Bin Type" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Types</SelectItem>
-                <SelectItem value="general">General</SelectItem>
-                <SelectItem value="recyclable">Recyclable</SelectItem>
-                <SelectItem value="organic">Organic</SelectItem>
-                <SelectItem value="hazardous">Hazardous</SelectItem>
-              </SelectContent>
-            </Select>
-            <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger className="w-full sm:w-40">
-                <SelectValue placeholder="Status" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All Status</SelectItem>
-                <SelectItem value="active">Active</SelectItem>
-                <SelectItem value="maintenance">Maintenance</SelectItem>
-                <SelectItem value="offline">Offline</SelectItem>
-              </SelectContent>
-            </Select>
+        {isLoading ? (
+          <div className="flex items-center justify-center h-64">
+            <Loader2 className="w-8 h-8 animate-spin text-purple-500" />
           </div>
-        </div>
+        ) : (
+          <>
+            {/* Key Metrics */}
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <Card className="border-0 shadow-lg bg-gradient-to-br from-emerald-500 to-teal-600 text-white">
+                <CardContent className="p-6">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-emerald-100 text-sm">Avg Fill Level</p>
+                      <p className="text-4xl font-bold mt-2">{avgFillLevel}%</p>
+                    </div>
+                    <Activity className="w-10 h-10 text-emerald-200" />
+                  </div>
+                </CardContent>
+              </Card>
 
-        {/* Table */}
-        <div className="bg-white rounded-xl shadow-lg border-0 overflow-hidden">
-          {isLoading ? (
-            <div className="flex items-center justify-center h-64">
-              <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
+              <Card className="border-0 shadow-lg bg-gradient-to-br from-blue-500 to-indigo-600 text-white">
+                <CardContent className="p-6">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-blue-100 text-sm">Total Bins</p>
+                      <p className="text-4xl font-bold mt-2">{bins.length}</p>
+                    </div>
+                    <Trash2 className="w-10 h-10 text-blue-200" />
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card className="border-0 shadow-lg bg-gradient-to-br from-amber-500 to-orange-600 text-white">
+                <CardContent className="p-6">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-amber-100 text-sm">Critical Bins</p>
+                      <p className="text-4xl font-bold mt-2">{criticalBins}</p>
+                    </div>
+                    <AlertTriangle className="w-10 h-10 text-amber-200" />
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card className="border-0 shadow-lg bg-gradient-to-br from-purple-500 to-violet-600 text-white">
+                <CardContent className="p-6">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-purple-100 text-sm">Efficiency</p>
+                      <p className="text-4xl font-bold mt-2">{collectionEfficiency}%</p>
+                    </div>
+                    <TrendingUp className="w-10 h-10 text-purple-200" />
+                  </div>
+                </CardContent>
+              </Card>
             </div>
-          ) : (
-            <Table>
-              <TableHeader>
-                <TableRow className="bg-slate-50">
-                  <TableHead>Bin ID</TableHead>
-                  <TableHead>Name</TableHead>
-                  <TableHead>Location</TableHead>
-                  <TableHead>Type</TableHead>
-                  <TableHead>Fill Level</TableHead>
-                  <TableHead>Battery</TableHead>
-                  <TableHead>Status</TableHead>
-                  <TableHead>Last Reading</TableHead>
-                  <TableHead className="text-right">Actions</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {filteredBins.map((bin) => (
-                  <TableRow key={bin.id} className="hover:bg-slate-50/50">
-                    <TableCell className="font-mono text-sm font-medium text-slate-600">
-                      {bin.bin_id}
-                    </TableCell>
-                    <TableCell className="font-medium">{bin.name}</TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-1 text-sm text-slate-500">
-                        <MapPin className="w-3 h-3" />
-                        {bin.location_name}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <Badge className={cn("capitalize", typeColors[bin.bin_type])}>
-                        {bin.bin_type}
-                      </Badge>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-2 min-w-[120px]">
-                        <Progress 
-                          value={bin.fill_level} 
-                          className="h-2 flex-1"
+
+            {/* Charts Row 1 */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+              {/* Fill Level Trend */}
+              <Card className="border-0 shadow-lg">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2 text-lg">
+                    <BarChart3 className="w-5 h-5 text-blue-500" />
+                    Fill Level Trend
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="h-72">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={trendData}>
+                        <defs>
+                          <linearGradient id="fillGradient" x1="0" y1="0" x2="0" y2="1">
+                            <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.3}/>
+                            <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0}/>
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                        <XAxis dataKey="date" stroke="#94a3b8" />
+                        <YAxis stroke="#94a3b8" domain={[0, 100]} />
+                        <Tooltip 
+                          contentStyle={{ 
+                            backgroundColor: '#fff', 
+                            border: 'none', 
+                            borderRadius: '12px',
+                            boxShadow: '0 10px 40px rgba(0,0,0,0.1)'
+                          }}
                         />
-                        <span className={cn(
-                          "text-sm font-medium min-w-[40px]",
-                          bin.fill_level >= 80 ? "text-red-600" : 
-                          bin.fill_level >= 60 ? "text-orange-600" : "text-emerald-600"
-                        )}>
-                          {bin.fill_level}%
-                        </span>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-1">
-                        <Battery className={cn(
-                          "w-4 h-4",
-                          bin.battery_level > 50 ? "text-emerald-500" : 
-                          bin.battery_level > 20 ? "text-amber-500" : "text-red-500"
-                        )} />
-                        <span className="text-sm">{bin.battery_level || 0}%</span>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <Badge className={cn("capitalize", statusColors[bin.status])}>
-                        {bin.status}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-sm text-slate-500">
-                      {bin.last_reading ? format(new Date(bin.last_reading), "MMM d, HH:mm") : '-'}
-                    </TableCell>
-                    <TableCell className="text-right">
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button variant="ghost" size="icon">
-                            <MoreHorizontal className="w-4 h-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem onClick={() => {
-                            setEditingBin(bin);
-                            setShowForm(true);
-                          }}>
-                            <Edit2 className="w-4 h-4 mr-2" />
-                            Edit
-                          </DropdownMenuItem>
-                          <DropdownMenuItem 
-                            className="text-red-600"
-                            onClick={() => setDeleteConfirm(bin)}
-                          >
-                            <Trash2 className="w-4 h-4 mr-2" />
-                            Delete
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </TableCell>
-                  </TableRow>
-                ))}
-                {filteredBins.length === 0 && (
-                  <TableRow>
-                    <TableCell colSpan={9} className="text-center py-12 text-slate-400">
-                      <Trash2 className="w-10 h-10 mx-auto mb-3 opacity-50" />
-                      <p>No bins found. Click "Add New Bin" to get started.</p>
-                    </TableCell>
-                  </TableRow>
-                )}
-              </TableBody>
-            </Table>
-          )}
-        </div>
+                        <Area 
+                          type="monotone" 
+                          dataKey="avgFill" 
+                          stroke="#8b5cf6" 
+                          strokeWidth={3}
+                          fill="url(#fillGradient)"
+                          name="Avg Fill %"
+                        />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  </div>
+                </CardContent>
+              </Card>
 
-        {/* Summary */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-100">
-            <p className="text-sm text-slate-500">Total Bins</p>
-            <p className="text-2xl font-bold text-slate-800">{bins.length}</p>
-          </div>
-          <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-100">
-            <p className="text-sm text-slate-500">Active</p>
-            <p className="text-2xl font-bold text-emerald-600">
-              {bins.filter(b => b.status === 'active').length}
-            </p>
-          </div>
-          <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-100">
-            <p className="text-sm text-slate-500">Maintenance</p>
-            <p className="text-2xl font-bold text-amber-600">
-              {bins.filter(b => b.status === 'maintenance').length}
-            </p>
-          </div>
-          <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-100">
-            <p className="text-sm text-slate-500">Offline</p>
-            <p className="text-2xl font-bold text-red-600">
-              {bins.filter(b => b.status === 'offline').length}
-            </p>
-          </div>
-        </div>
-      </div>
+              {/* Fill Level Distribution */}
+              <Card className="border-0 shadow-lg">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2 text-lg">
+                    <PieChartIcon className="w-5 h-5 text-emerald-500" />
+                    Fill Level Distribution
+                  </CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="h-72">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <PieChart>
+                        <Pie
+                          data={fillDistribution}
+                          cx="50%"
+                          cy="50%"
+                          innerRadius={60}
+                          outerRadius={100}
+                          paddingAngle={3}
+                          dataKey="value"
+                        >
+                          {fillDistribution.map((entry, index) => (
+                            <Cell key={`cell-${index}`} fill={entry.color} />
+                          ))}
+                        </Pie>
+                        <Tooltip />
+                        <Legend />
+                      </PieChart>
+                    </ResponsiveContainer>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
 
-      {/* Form Modal */}
-      <BinForm
-        bin={editingBin}
-        open={showForm}
-        onClose={() => {
-          setShowForm(false);
-          setEditingBin(null);
-        }}
-        onSubmit={handleSubmit}
-        isLoading={createMutation.isPending || updateMutation.isPending}
-      />
+            {/* Charts Row 2 */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+              {/* Bin Type Distribution */}
+              <Card className="border-0 shadow-lg">
+                <CardHeader>
+                  <CardTitle className="text-lg">Bin Types</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="h-64">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={typeDistribution} layout="vertical">
+                        <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                        <XAxis type="number" stroke="#94a3b8" />
+                        <YAxis dataKey="name" type="category" stroke="#94a3b8" width={80} />
+                        <Tooltip />
+                        <Bar dataKey="value" radius={[0, 8, 8, 0]}>
+                          {typeDistribution.map((entry, index) => (
+                            <Cell key={`cell-${index}`} fill={COLORS[index]} />
+                          ))}
+                        </Bar>
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                </CardContent>
+              </Card>
 
-      {/* Delete Confirmation */}
-      <AlertDialog open={!!deleteConfirm} onOpenChange={() => setDeleteConfirm(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Delete Bin</AlertDialogTitle>
-            <AlertDialogDescription>
-              Are you sure you want to delete "{deleteConfirm?.name}"? This action cannot be undone.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              className="bg-red-500 hover:bg-red-600"
-              onClick={() => deleteMutation.mutate(deleteConfirm.id)}
-            >
-              {deleteMutation.isPending ? (
-                <Loader2 className="w-4 h-4 animate-spin mr-2" />
-              ) : null}
-              Delete
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </div>
-  );
-}
+              {/* Connection Types */}
+              <Card className="border-0 shadow-lg">
+ 
